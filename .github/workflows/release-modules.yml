@@ -8,8 +8,8 @@ on:
       ref_name:
         required: true
         type: string
-      build_all:
-        description: 'Build all modules'
+      release_all:
+        description: 'Force release all modules'
         required: false
         default: false
         type: boolean
@@ -28,6 +28,11 @@ on:
         required: false
         default: '0'
         type: string
+      sign_binaries:
+        description: 'Sign binaries'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -48,7 +53,7 @@ jobs:
       - name: Setup Environment Variables
         run: |
           if [ "${{ matrix.runner[1] }}" == "Linux" ]; then
-            echo "SYSTEM_NOSMAN_PATH=/usr/bin/nodos" >> $GITHUB_ENV
+            echo "SYSTEM_NOSMAN_PATH=~/Tools/nodos/nodos" >> $GITHUB_ENV
             echo "NOSMAN_EXECUTABLE_NAME=nodos" >> $GITHUB_ENV
             echo "TAG_NAME_PREFIX=build.${{ inputs.ref_name }}-linux" >> $GITHUB_ENV
           else
@@ -107,8 +112,9 @@ jobs:
           git clean -ffd
           git restore .
           git pull --force
-          git submodule update --force --recursive --init
           git fetch --tags
+          git checkout ${{ github.sha }}
+          git submodule update --force --recursive --init
           git status
         working-directory: modules-${{ inputs.ref_name }}/workspace/Module
 
@@ -136,8 +142,14 @@ jobs:
           cmake --build ../Project --config Release -j 8
         working-directory: modules-${{ inputs.ref_name }}/workspace
 
+      - name: Sign Binaries
+        if: ${{ inputs.sign_binaries && matrix.runner[1] == 'Windows' }}
+        run: |            
+          cd /d %MEDIAZ_CERTIFICATES_DIR% && python sign_module.py ${{ github.workspace }}/modules-${{ inputs.ref_name }}/workspace/Module/modules-repo
+        shell: bash
+
       - name: Release (Changed)
-        if: ${{ inputs.build_all == null || inputs.build_all == false }}
+        if: ${{ inputs.release_all == null || inputs.release_all == false }}
         shell: pwsh
         run: |
           $LastBuildTag = git for-each-ref --sort=-v:refname --format='%(refname:short)' 'refs/tags/${{ env.TAG_NAME_PREFIX }}-*' | Select-Object -First 1
@@ -146,7 +158,7 @@ jobs:
         working-directory: modules-${{ inputs.ref_name }}/workspace/Module/modules-repo
       
       - name: Release (All)
-        if: ${{ inputs.build_all }}
+        if: ${{ inputs.release_all }}
         shell: pwsh
         run: |
           ../../${{ env.NOSMAN_EXECUTABLE_NAME }} --workspace ../../ publish-batch --repo-path . --vendor=Nodos --version-suffix ".b${{ inputs.build_number }}" --verbose --publisher-name "${{ env.GH_USERNAME }}" --publisher-email "${{ env.GIT_EMAIL }}" --tag "${{ inputs.ref_name }}"
